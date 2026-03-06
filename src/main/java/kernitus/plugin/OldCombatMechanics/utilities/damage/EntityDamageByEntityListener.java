@@ -101,6 +101,10 @@ public class EntityDamageByEntityListener extends OCMModule {
     public void onEntityDamage(EntityDamageEvent event) {
         final Entity damagee = event.getEntity();
 
+        if (!isEnabled(event.getEntity())) {
+            return;
+        }
+
         if (!(event instanceof EntityDamageByEntityEvent)) {
             // Damage immunity only applies to living entities
             if (!(damagee instanceof LivingEntity)) return;

@@ -6,7 +6,6 @@
 
 package kernitus.plugin.OldCombatMechanics.utilities.storage;
 
-import org.bson.Document;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.HashMap;
@@ -34,18 +33,5 @@ public class PlayerData {
 
     public @Nullable String getModesetForWorld(UUID worldId) {
         return modesetByWorld.get(worldId);
-    }
-
-    public static PlayerData fromDocument(Document doc) {
-        final PlayerData playerData = new PlayerData();
-        final Document modesetByWorldDoc = (Document) doc.get("modesetByWorld");
-        if (modesetByWorldDoc != null) {
-            for (Map.Entry<String, Object> entry : modesetByWorldDoc.entrySet()) {
-                UUID worldId = UUID.fromString(entry.getKey());
-                String modeset = (String) entry.getValue();
-                playerData.setModesetForWorld(worldId, modeset);
-            }
-        }
-        return playerData;
     }
 }

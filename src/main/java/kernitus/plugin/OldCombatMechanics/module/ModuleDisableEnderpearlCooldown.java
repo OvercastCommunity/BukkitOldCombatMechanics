@@ -19,8 +19,13 @@ import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.projectiles.ProjectileSource;
+import org.bukkit.util.Vector;
 
-import java.util.*;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 
 /**
  * Allows you to throw enderpearls as often as you like, not only after a cooldown.
@@ -76,6 +81,7 @@ public class ModuleDisableEnderpearlCooldown extends OCMModule {
 
         if (ignoredPlayers.contains(uuid)) return;
 
+        Vector previousVelocity = e.getEntity().getVelocity();
         e.setCancelled(true);
 
         // Check if the cooldown has expired yet
@@ -101,7 +107,7 @@ public class ModuleDisableEnderpearlCooldown extends OCMModule {
         final EnderPearl pearl = player.launchProjectile(EnderPearl.class);
         ignoredPlayers.remove(uuid);
 
-        pearl.setVelocity(player.getEyeLocation().getDirection().multiply(2));
+        pearl.setVelocity(previousVelocity);
 
         if (player.getGameMode() == GameMode.CREATIVE) return;
 
