@@ -8,11 +8,13 @@ package kernitus.plugin.OldCombatMechanics.module;
 import com.cryptomorin.xseries.XAttribute;
 import kernitus.plugin.OldCombatMechanics.OCMMain;
 import kernitus.plugin.OldCombatMechanics.utilities.reflection.Reflector;
+import net.minecraft.world.level.Level;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.attribute.AttributeInstance;
 import com.cryptomorin.xseries.XEnchantment;
+import org.bukkit.craftbukkit.entity.CraftPlayer;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.HumanEntity;
 import org.bukkit.entity.LivingEntity;
@@ -72,6 +74,12 @@ public class ModulePlayerKnockback extends OCMModule {
                 && Reflector.versionIsNewerOrEqualTo(1, 16, 0);
     }
 
+    @Override
+    public void onModesetChange(Player player) {
+        Level level = ((CraftPlayer) player).getHandle().level();
+        level.paperConfig().misc.disableSprintInterruptionOnAttack = !isEnabled(player);
+    }
+
     @EventHandler
     public void onPlayerQuit(PlayerQuitEvent e) {
         pendingKnockback.remove(e.getPlayer().getUniqueId());
@@ -129,8 +137,6 @@ public class ModulePlayerKnockback extends OCMModule {
         final Player victim = (Player) damagee;
 
         if (event.getCause() != EntityDamageEvent.DamageCause.ENTITY_ATTACK)
-            return;
-        if (event.getDamage(EntityDamageEvent.DamageModifier.BLOCKING) > 0)
             return;
 
         if (attacker instanceof HumanEntity) {

@@ -134,7 +134,6 @@ public class OCMCommandHandler implements CommandExecutor {
         final PlayerData playerData = PlayerStorage.getPlayerData(player.getUniqueId());
         playerData.setModesetForWorld(worldId, modesetName);
         PlayerStorage.setPlayerData(player.getUniqueId(), playerData);
-        PlayerStorage.scheduleSave();
 
         Messenger.send(sender,
                 Config.getConfig().getString("mode-messages.mode-set",

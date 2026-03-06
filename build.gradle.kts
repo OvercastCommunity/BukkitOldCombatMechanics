@@ -7,13 +7,7 @@
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 import groovy.json.JsonSlurper
 import io.papermc.hangarpublishplugin.model.Platforms
-import org.gradle.api.Action
-import org.gradle.api.attributes.java.TargetJvmVersion
-import org.gradle.api.file.FileCopyDetails
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import xyz.jpenilla.runpaper.task.RunServer
-import java.io.ByteArrayOutputStream
 import java.io.Closeable
 import java.io.Serializable
 import java.net.URI
@@ -30,6 +24,7 @@ plugins {
     kotlin("jvm") version "2.3.0"
     id("com.gradleup.shadow") version "9.3.0"
     id("xyz.jpenilla.run-paper") version "3.0.2"
+    id("io.papermc.paperweight.userdev") version "2.0.0-beta.19"
     idea
     id("io.papermc.hangar-publish-plugin") version "0.1.4"
 }
@@ -54,8 +49,6 @@ repositories {
     maven("https://repo.codemc.io/repository/maven-snapshots/")
     // Placeholder API
     maven("https://repo.extendedclip.com/content/repositories/placeholderapi/")
-    // CodeMC Repo for bStats
-    maven("https://repo.codemc.org/repository/maven-public/")
     // Auth library from Minecraft
     maven("https://libraries.minecraft.net/")
 }
@@ -63,12 +56,11 @@ repositories {
 group = "kernitus.plugin.OldCombatMechanics"
 version = "2.5.0-beta" // x-release-please-version
 description = "OldCombatMechanics"
+paperweight.reobfArtifactConfiguration = io.papermc.paperweight.userdev.ReobfArtifactConfiguration.MOJANG_PRODUCTION
 
 java {
     toolchain {
-        // We can build with Java 17 but still support MC >=1.9
-        // This is because MC >=1.9 server can be run with higher Java versions
-        languageVersion.set(JavaLanguageVersion.of(17))
+        languageVersion.set(JavaLanguageVersion.of(21))
     }
 }
 
@@ -92,22 +84,19 @@ configurations {
 }
 
 configurations.named("compileClasspath") {
-    attributes.attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 17)
+    attributes.attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 21)
 }
 configurations.named("integrationTestCompileClasspath") {
-    attributes.attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 17)
+    attributes.attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 21)
 }
 
 dependencies {
-    implementation("org.bstats:bstats-bukkit:3.1.0")
     // Shaded in by Bukkit
     compileOnly("io.netty:netty-all:4.1.130.Final")
     // Placeholder API
     compileOnly("me.clip:placeholderapi:2.11.6")
-    // For BSON file serialisation
-    implementation("org.mongodb:bson:5.6.2")
-    // Spigot
-    compileOnly("org.spigotmc:spigot-api:1.21.11-R0.1-SNAPSHOT")
+    // Paper
+    paperweight.paperDevBundle("1.21.11-R0.1-SNAPSHOT")
     // JSR-305 annotations (javax.annotation.Nullable)
     compileOnly("com.google.code.findbugs:jsr305:3.0.2")
     // PacketEvents
@@ -157,7 +146,6 @@ tasks.named<Copy>("processResources") {
 
 tasks.withType<JavaCompile> {
     options.encoding = "UTF-8"
-    options.release.set(8)
 }
 
 val shadowJarTask =
@@ -166,7 +154,6 @@ val shadowJarTask =
         archiveFileName.set("${project.name}.jar")
         dependencies {
             exclude(dependency("org.jetbrains.kotlin:.*"))
-            relocate("org.bstats", "kernitus.plugin.OldCombatMechanics.lib.bstats")
             relocate("com.cryptomorin.xseries", "kernitus.plugin.OldCombatMechanics.lib.xseries")
             relocate("com.github.retrooper.packetevents", "kernitus.plugin.OldCombatMechanics.lib.packetevents.api")
             relocate("io.github.retrooper.packetevents", "kernitus.plugin.OldCombatMechanics.lib.packetevents.impl")
@@ -184,14 +171,6 @@ tasks.assemble {
     // For ingametesting
     // dependsOn("reobfJar")
     dependsOn("shadowJar")
-}
-
-kotlin {
-    jvmToolchain(17)
-}
-
-tasks.withType<KotlinCompile>().configureEach {
-    compilerOptions.jvmTarget.set(JvmTarget.JVM_1_8)
 }
 
 val relocateIntegrationTestClasses =

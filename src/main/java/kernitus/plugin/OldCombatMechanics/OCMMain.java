@@ -12,19 +12,11 @@ import kernitus.plugin.OldCombatMechanics.commands.OCMCommandHandler;
 import kernitus.plugin.OldCombatMechanics.hooks.PlaceholderAPIHook;
 import kernitus.plugin.OldCombatMechanics.hooks.api.Hook;
 import kernitus.plugin.OldCombatMechanics.module.*;
-import kernitus.plugin.OldCombatMechanics.updater.ModuleUpdateChecker;
 import kernitus.plugin.OldCombatMechanics.utilities.Config;
 import kernitus.plugin.OldCombatMechanics.utilities.Messenger;
-import kernitus.plugin.OldCombatMechanics.utilities.damage.AttackCooldownTracker;
-import kernitus.plugin.OldCombatMechanics.utilities.damage.EntityDamageByEntityListener;
-import kernitus.plugin.OldCombatMechanics.utilities.reflection.Reflector;
 import kernitus.plugin.OldCombatMechanics.utilities.storage.ModesetListener;
 import kernitus.plugin.OldCombatMechanics.utilities.storage.PlayerStorage;
-import org.bstats.bukkit.Metrics;
-import org.bstats.charts.SimpleBarChart;
-import org.bstats.charts.SimplePie;
 import org.bukkit.Bukkit;
-import org.bukkit.entity.HumanEntity;
 import org.bukkit.event.EventException;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
@@ -94,35 +86,6 @@ public class OCMMain extends JavaPlugin {
 
         Config.reload();
 
-        // BStats Metrics
-        final Metrics metrics = new Metrics(this, 53);
-
-        metrics.addCustomChart(new SimplePie("server_software", () -> {
-            final String name = Bukkit.getServer().getName();
-            if (name == null || name.isEmpty()) return "Unknown";
-            final String cleaned = name.split("\\s", 2)[0].trim();
-            return cleaned.isEmpty() ? "Unknown" : cleaned;
-        }));
-
-        // Simple bar chart (kept in case bStats re-enables bar display)
-        metrics.addCustomChart(
-                new SimpleBarChart(
-                        "enabled_modules",
-                        () -> ModuleLoader.getModules().stream()
-                                .filter(OCMModule::isEnabled)
-                                .collect(Collectors.toMap(OCMModule::toString, module -> 1))));
-
-        // Pie chart of enabled/disabled for each module
-        ModuleLoader.getModules().forEach(module -> metrics.addCustomChart(
-                new SimplePie(module.getModuleName() + "_pie",
-                        () -> module.isEnabled() ? "enabled" : "disabled")));
-
-        // Simple pie: exact count of enabled modules per server (as a string key).
-        metrics.addCustomChart(new SimplePie("enabled_modules_count", () -> {
-            int count = (int) ModuleLoader.getModules().stream().filter(OCMModule::isEnabled).count();
-            return Integer.toString(count);
-        }));
-
         enableListeners.forEach(Runnable::run);
 
         // Properly handle Plugman load/unload.
@@ -154,11 +117,6 @@ public class OCMMain extends JavaPlugin {
         if (Config.moduleEnabled("update-checker"))
             Bukkit.getScheduler().runTaskLaterAsynchronously(this,
                     () -> new UpdateChecker(this).performUpdate(), 20L);
-
-        metrics.addCustomChart(new SimplePie("auto_update_pie",
-                () -> Config.moduleSettingEnabled("update-checker",
-                        "auto-update") ? "enabled" : "disabled"));
-
     }
 
     @Override
@@ -189,8 +147,6 @@ public class OCMMain extends JavaPlugin {
             });
         });
 
-        PlayerStorage.instantSave();
-
         PacketEvents.getAPI().terminate();
 
         // Logging to console the disabling of OCM
@@ -200,27 +156,27 @@ public class OCMMain extends JavaPlugin {
     private void registerModules() {
         // Update Checker (also a module, so we can use the dynamic
         // registering/unregistering)
-        ModuleLoader.addModule(new ModuleUpdateChecker(this));
+        // ModuleLoader.addModule(new ModuleUpdateChecker(this));
 
         // Modeset listener, for when player joins or changes world
         ModuleLoader.addModule(new ModesetListener(this));
 
         // Module listeners
         ModuleLoader.addModule(new ModuleAttackCooldown(this));
-        ModuleLoader.addModule(new ModuleAttackRange(this));
+        // ModuleLoader.addModule(new ModuleAttackRange(this));
 
         // If below 1.16, we need to keep track of player attack cooldown ourselves
-        if (Reflector.getMethod(HumanEntity.class, "getAttackCooldown", 0) == null) {
-            ModuleLoader.addModule(new AttackCooldownTracker(this));
-        }
+        // if (Reflector.getMethod(HumanEntity.class, "getAttackCooldown", 0) == null) {
+        //     ModuleLoader.addModule(new AttackCooldownTracker(this));
+        // }
 
         // Listeners registered later with same priority are called later
 
         // These four listen to OCMEntityDamageByEntityEvent:
-        ModuleLoader.addModule(new ModuleOldToolDamage(this));
+        // ModuleLoader.addModule(new ModuleOldToolDamage(this));
         ModuleLoader.addModule(new ModuleSwordSweep(this));
-        ModuleLoader.addModule(new ModuleOldPotionEffects(this));
-        ModuleLoader.addModule(new ModuleOldCriticalHits(this));
+        // ModuleLoader.addModule(new ModuleOldPotionEffects(this));
+        // ModuleLoader.addModule(new ModuleOldCriticalHits(this));
 
         // Next block are all on LOWEST priority, so will be called in the following
         // order:
@@ -230,28 +186,28 @@ public class OCMMain extends JavaPlugin {
         // EntityDamageByEntityListener calls OCMEntityDamageByEntityEvent, see modules
         // above
         // For everything from base to overdamage
-        ModuleLoader.addModule(new EntityDamageByEntityListener(this));
+        // ModuleLoader.addModule(new EntityDamageByEntityListener(this));
         // ModuleSwordBlocking to calculate blocking
-        ModuleLoader.addModule(new ModuleShieldDamageReduction(this));
+        // ModuleLoader.addModule(new ModuleShieldDamageReduction(this));
         // OldArmourStrength for armour -> resistance -> armour enchs -> absorption
-        ModuleLoader.addModule(new ModuleOldArmourStrength(this));
+        // ModuleLoader.addModule(new ModuleOldArmourStrength(this));
 
-        ModuleLoader.addModule(new ModuleSwordBlocking(this));
-        ModuleLoader.addModule(new ModuleOldArmourDurability(this));
+        // ModuleLoader.addModule(new ModuleSwordBlocking(this));
+        // ModuleLoader.addModule(new ModuleOldArmourDurability(this));
 
-        ModuleLoader.addModule(new ModuleGoldenApple(this));
+        // ModuleLoader.addModule(new ModuleGoldenApple(this));
         ModuleLoader.addModule(new ModuleFishingKnockback(this));
         ModuleLoader.addModule(new ModulePlayerKnockback(this));
-        ModuleLoader.addModule(new ModulePlayerRegen(this));
+        // ModuleLoader.addModule(new ModulePlayerRegen(this));
 
-        ModuleLoader.addModule(new ModuleDisableCrafting(this));
-        ModuleLoader.addModule(new ModuleDisableOffHand(this));
-        ModuleLoader.addModule(new ModuleOldBrewingStand(this));
+        // ModuleLoader.addModule(new ModuleDisableCrafting(this));
+        // ModuleLoader.addModule(new ModuleDisableOffHand(this));
+        // ModuleLoader.addModule(new ModuleOldBrewingStand(this));
         ModuleLoader.addModule(new ModuleProjectileKnockback(this));
         ModuleLoader.addModule(new ModuleDisableEnderpearlCooldown(this));
-        ModuleLoader.addModule(new ModuleChorusFruit(this));
+        // ModuleLoader.addModule(new ModuleChorusFruit(this));
 
-        ModuleLoader.addModule(new ModuleOldBurnDelay(this));
+        // ModuleLoader.addModule(new ModuleOldBurnDelay(this));
         ModuleLoader.addModule(new ModuleAttackFrequency(this));
         ModuleLoader.addModule(new ModuleFishingRodVelocity(this));
 
