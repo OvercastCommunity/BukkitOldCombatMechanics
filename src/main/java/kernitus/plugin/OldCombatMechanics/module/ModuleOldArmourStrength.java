@@ -9,6 +9,8 @@ import kernitus.plugin.OldCombatMechanics.OCMMain;
 import kernitus.plugin.OldCombatMechanics.utilities.damage.DefenceUtils;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
+import org.bukkit.entity.Player;
+import org.bukkit.entity.Projectile;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
@@ -46,11 +48,18 @@ public class ModuleOldArmourStrength extends OCMModule {
         // 1.8 NMS: Damage = (damage after blocking * (25 - total armour strength)) / 25
         if (!(e.getEntity() instanceof LivingEntity)) return;
 
+        if (!this.isEnabled(e.getEntity())) {
+            return;
+        }
+
         final LivingEntity damagedEntity = (LivingEntity) e.getEntity();
 
         // If there was an attacker, and he does not have this module enabled, return
         if (e.getCause() == EntityDamageEvent.DamageCause.ENTITY_ATTACK && e instanceof EntityDamageByEntityEvent) {
-            final Entity damager = ((EntityDamageByEntityEvent) e).getDamager();
+            Entity damager = ((EntityDamageByEntityEvent) e).getDamager();
+            if (damager instanceof Projectile projectile && projectile.getShooter() instanceof Player player) {
+                damager = player;
+            }
             if(!isEnabled(damager, damagedEntity)) return;
         }
 

@@ -6,6 +6,7 @@
 
 package kernitus.plugin.OldCombatMechanics.utilities.storage;
 
+import com.destroystokyo.paper.event.entity.EntityRemoveFromWorldEvent;
 import kernitus.plugin.OldCombatMechanics.OCMMain;
 import kernitus.plugin.OldCombatMechanics.module.OCMModule;
 import kernitus.plugin.OldCombatMechanics.utilities.Config;
@@ -16,6 +17,7 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.world.WorldLoadEvent;
 import org.bukkit.event.world.WorldUnloadEvent;
 
@@ -65,7 +67,6 @@ public class ModesetListener extends OCMModule {
         if (originalModeset == null || !originalModeset.equals(modesetName)) {
             playerData.setModesetForWorld(worldId, modesetName);
             PlayerStorage.setPlayerData(playerId, playerData);
-            PlayerStorage.scheduleSave();
 
             Messenger.send(player,
                     Config.getConfig().getString("mode-messages.mode-set",
@@ -93,5 +94,15 @@ public class ModesetListener extends OCMModule {
         final World world = event.getWorld();
         Config.removeWorld(world);
         Messenger.info("Unloaded configured world " + world.getName());
+    }
+
+    @EventHandler
+    public void onPlayerQuit(PlayerQuitEvent event) {
+        PlayerStorage.clearPlayerData(event.getPlayer().getUniqueId());
+    }
+
+    @EventHandler
+    public void onEntityRemove(EntityRemoveFromWorldEvent event) {
+        PlayerStorage.clearPlayerData(event.getEntity().getUniqueId());
     }
 }
