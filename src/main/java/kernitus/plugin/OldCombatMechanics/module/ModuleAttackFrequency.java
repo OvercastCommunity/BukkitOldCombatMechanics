@@ -5,6 +5,7 @@
  */
 package kernitus.plugin.OldCombatMechanics.module;
 
+import com.destroystokyo.paper.event.player.PlayerPostRespawnEvent;
 import kernitus.plugin.OldCombatMechanics.OCMMain;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -61,7 +62,7 @@ public class ModuleAttackFrequency extends OCMModule {
     }
 
     @EventHandler
-    public void onPlayerRespawn(PlayerRespawnEvent e) {
+    public void onPlayerRespawn(PlayerPostRespawnEvent e) {
         final Player player = e.getPlayer();
         setDelay(player, isEnabled(player) ? playerDelay : DEFAULT_DELAY);
     }

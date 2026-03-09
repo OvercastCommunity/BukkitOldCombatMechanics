@@ -6,16 +6,23 @@
 package kernitus.plugin.OldCombatMechanics.module;
 
 import com.cryptomorin.xseries.XAttribute;
+import io.papermc.paper.event.player.PlayerInventorySlotChangeEvent;
 import kernitus.plugin.OldCombatMechanics.OCMMain;
+import kernitus.plugin.OldCombatMechanics.utilities.reflection.Reflector;
 import kernitus.plugin.OldCombatMechanics.utilities.storage.PlayerStorage;
 import org.bukkit.Bukkit;
+import org.bukkit.Tag;
 import org.bukkit.attribute.AttributeInstance;
+import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
+import org.bukkit.event.player.PlayerItemHeldEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.PlayerInventory;
 
 /**
  * Disables the attack cooldown.
@@ -23,6 +30,8 @@ import org.bukkit.event.player.PlayerQuitEvent;
 public class ModuleAttackCooldown extends OCMModule {
 
     private final double NEW_ATTACK_SPEED = 4;
+    private boolean excludeNormalSpears;
+    private boolean excludeLungeSpears;
 
     public ModuleAttackCooldown(OCMMain plugin) {
         super(plugin, "disable-attack-cooldown");
@@ -30,6 +39,8 @@ public class ModuleAttackCooldown extends OCMModule {
 
     @Override
     public void reload() {
+        excludeNormalSpears = module().getBoolean("excludeNormalSpears", false);
+        excludeLungeSpears = module().getBoolean("excludeLungeSpears", true);
         Bukkit.getOnlinePlayers().forEach(this::adjustAttackSpeed);
     }
 
@@ -55,7 +66,11 @@ public class ModuleAttackCooldown extends OCMModule {
      * @param player the player to set the attack speed for
      */
     private void adjustAttackSpeed(Player player) {
-        final double attackSpeed = isEnabled(player)
+        adjustAttackSpeed(player, player.getInventory().getItemInMainHand());
+    }
+
+    private void adjustAttackSpeed(Player player, ItemStack iStack) {
+        final double attackSpeed = isEnabled(player) && !isAffected(iStack)
                 ? module().getDouble("generic-attack-speed")
                 : NEW_ATTACK_SPEED;
 
@@ -65,6 +80,45 @@ public class ModuleAttackCooldown extends OCMModule {
     @Override
     public void onModesetChange(Player player) {
         adjustAttackSpeed(player);
+    }
+
+    @EventHandler
+    public void onPlayerInventorySlotChange(PlayerInventorySlotChangeEvent event) {
+        if (!excludeNormalSpears && !excludeLungeSpears) return;
+
+        Player player = event.getPlayer();
+        if (!isEnabled(player)) return;
+
+        ItemStack oldItem = event.getOldItemStack();
+        ItemStack newItem = event.getNewItemStack();
+
+        boolean hasChanged = isAffected(oldItem) != isAffected(newItem);
+        if (hasChanged)
+            adjustAttackSpeed(player, newItem);
+    }
+
+    private boolean isAffected(ItemStack iStack) {
+        if (!Reflector.versionIsNewerOrEqualTo(1, 21, 11)) return false;
+
+        return iStack != null && (excludeNormalSpears && !hasLungeEffect(iStack) ||
+                excludeLungeSpears && hasLungeEffect(iStack)) &&
+                Tag.ITEMS_SPEARS.isTagged(iStack.getType());
+    }
+
+    @EventHandler
+    public void onPlayerItemHeld(PlayerItemHeldEvent event) {
+        if (!excludeNormalSpears && !excludeLungeSpears) return;
+
+        Player player = event.getPlayer();
+        if (!isEnabled(player)) return;
+
+        PlayerInventory inv = player.getInventory();
+        ItemStack oldItem = inv.getItem(event.getPreviousSlot());
+        ItemStack newItem = inv.getItem(event.getNewSlot());
+
+        boolean hasChanged = isAffected(oldItem) != isAffected(newItem);
+        if (hasChanged)
+            adjustAttackSpeed(player, newItem);
     }
 
     /**
@@ -91,5 +145,13 @@ public class ModuleAttackCooldown extends OCMModule {
             attribute.setBaseValue(attackSpeed);
             player.saveData();
         }
+    }
+
+    private boolean hasLungeEffect(ItemStack iStack) {
+        if (!Reflector.versionIsNewerOrEqualTo(1, 21, 11)) return false;
+        if (iStack == null) return false;
+        if (!iStack.hasItemMeta()) return false;
+
+        return iStack.getItemMeta().hasEnchant(Enchantment.LUNGE);
     }
 }
