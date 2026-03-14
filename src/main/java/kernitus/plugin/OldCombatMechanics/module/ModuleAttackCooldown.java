@@ -11,13 +11,17 @@ import kernitus.plugin.OldCombatMechanics.OCMMain;
 import kernitus.plugin.OldCombatMechanics.utilities.reflection.Reflector;
 import kernitus.plugin.OldCombatMechanics.utilities.storage.PlayerStorage;
 import org.bukkit.Bukkit;
+import org.bukkit.NamespacedKey;
 import org.bukkit.Tag;
 import org.bukkit.attribute.AttributeInstance;
+import org.bukkit.attribute.AttributeModifier;
+import org.bukkit.attribute.AttributeModifier.Operation;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
+import org.bukkit.event.player.PlayerGameModeChangeEvent;
 import org.bukkit.event.player.PlayerItemHeldEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
@@ -29,7 +33,7 @@ import org.bukkit.inventory.PlayerInventory;
  */
 public class ModuleAttackCooldown extends OCMModule {
 
-    private final double NEW_ATTACK_SPEED = 4;
+    private static final NamespacedKey MODIFIER_KEY = new NamespacedKey("ocm", "attack_speed_multiplier");
     private boolean excludeNormalSpears;
     private boolean excludeLungeSpears;
 
@@ -39,13 +43,18 @@ public class ModuleAttackCooldown extends OCMModule {
 
     @Override
     public void reload() {
-        excludeNormalSpears = module().getBoolean("excludeNormalSpears", false);
-        excludeLungeSpears = module().getBoolean("excludeLungeSpears", true);
+        excludeNormalSpears = module().getBoolean("exclude-normal-spears", true);
+        excludeLungeSpears = module().getBoolean("exclude-lunge-spears", true);
         Bukkit.getOnlinePlayers().forEach(this::adjustAttackSpeed);
     }
 
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onPlayerLogin(PlayerJoinEvent e) {
+        adjustAttackSpeed(e.getPlayer());
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onPlayerLogin(PlayerGameModeChangeEvent e) {
         adjustAttackSpeed(e.getPlayer());
     }
 
@@ -56,25 +65,20 @@ public class ModuleAttackCooldown extends OCMModule {
 
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onPlayerQuit(PlayerQuitEvent e) {
-        setAttackSpeed(e.getPlayer(), NEW_ATTACK_SPEED);
+        removeAttackSpeedModifier(e.getPlayer());
     }
 
-    /**
-     * Adjusts the attack speed to the default or configured value, depending on
-     * whether the module is enabled.
-     *
-     * @param player the player to set the attack speed for
-     */
     private void adjustAttackSpeed(Player player) {
         adjustAttackSpeed(player, player.getInventory().getItemInMainHand());
     }
 
     private void adjustAttackSpeed(Player player, ItemStack iStack) {
-        final double attackSpeed = isEnabled(player) && !isAffected(iStack)
-                ? module().getDouble("generic-attack-speed")
-                : NEW_ATTACK_SPEED;
-
-        setAttackSpeed(player, attackSpeed);
+        if (isEnabled(player) && !isAffected(iStack)) {
+            final double multiplier = module().getDouble("attack-speed-multiplier", 4.0);
+            setAttackSpeedMultiplier(player, multiplier);
+        } else {
+            removeAttackSpeedModifier(player);
+        }
     }
 
     @Override
@@ -121,30 +125,46 @@ public class ModuleAttackCooldown extends OCMModule {
             adjustAttackSpeed(player, newItem);
     }
 
-    /**
-     * Sets the attack speed to the given value.
-     *
-     * @param player      the player to set it for
-     * @param attackSpeed the attack speed to set it to
-     */
-    public void setAttackSpeed(Player player, double attackSpeed) {
+    public void setAttackSpeedMultiplier(Player player, double multiplier) {
         final AttributeInstance attribute = player.getAttribute(XAttribute.ATTACK_SPEED.get());
         if (attribute == null)
             return;
 
-        final double baseValue = attribute.getBaseValue();
+        attribute.getModifiers().stream()
+                .filter(m -> MODIFIER_KEY.equals(m.getKey()))
+                .forEach(attribute::removeModifier);
+
+        if (multiplier == 1.0) return;
+
+        final AttributeModifier modifier = new AttributeModifier(
+                MODIFIER_KEY, multiplier,
+                Operation.MULTIPLY_SCALAR_1
+        );
+
+        attribute.addModifier(modifier);
 
         final String modesetName = PlayerStorage.getPlayerData(player.getUniqueId())
                 .getModesetForWorld(player.getWorld().getUID());
-        debug(String.format("Setting attack speed to %.2f (was: %.2f) for %s in mode %s", attackSpeed, baseValue,
-                player.getName(), modesetName));
+        debug(String.format("Applied attack speed multiplier %.2fx to %s in mode %s",
+                multiplier, player.getName(), modesetName), player);
 
-        if (baseValue != attackSpeed) {
-            debug(String.format("Setting attack speed to %.2f (was: %.2f)", attackSpeed, baseValue), player);
+        player.saveData();
+    }
 
-            attribute.setBaseValue(attackSpeed);
-            player.saveData();
-        }
+    public void removeAttackSpeedModifier(Player player) {
+        final AttributeInstance attribute = player.getAttribute(XAttribute.ATTACK_SPEED.get());
+        if (attribute == null) return;
+
+        attribute.getModifiers().stream()
+                .filter(m -> MODIFIER_KEY.equals(m.getKey()))
+                .forEach(attribute::removeModifier);
+
+        final String modesetName = PlayerStorage.getPlayerData(player.getUniqueId())
+                .getModesetForWorld(player.getWorld().getUID());
+        debug(String.format("Removed attack speed modifier from %s in mode %s",
+                player.getName(), modesetName), player);
+
+        player.saveData();
     }
 
     private boolean hasLungeEffect(ItemStack iStack) {
