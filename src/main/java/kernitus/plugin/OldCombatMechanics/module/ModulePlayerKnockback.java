@@ -6,33 +6,30 @@
 package kernitus.plugin.OldCombatMechanics.module;
 
 import com.cryptomorin.xseries.XAttribute;
+import com.destroystokyo.paper.event.entity.EntityKnockbackByEntityEvent;
 import kernitus.plugin.OldCombatMechanics.OCMMain;
-import kernitus.plugin.OldCombatMechanics.utilities.reflection.Reflector;
 import net.minecraft.world.level.Level;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
-import org.bukkit.attribute.AttributeInstance;
 import com.cryptomorin.xseries.XEnchantment;
 import org.bukkit.craftbukkit.entity.CraftPlayer;
-import org.bukkit.entity.Entity;
-import org.bukkit.entity.HumanEntity;
-import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
-import org.bukkit.event.player.PlayerVelocityEvent;
 import org.bukkit.inventory.EntityEquipment;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.Vector;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -46,15 +43,10 @@ public class ModulePlayerKnockback extends OCMModule {
     private double knockbackVerticalLimit;
     private double knockbackExtraHorizontal;
     private double knockbackExtraVertical;
-    private boolean netheriteKnockbackResistance;
 
-    // Knockback override for the next PlayerVelocityEvent.
-    // Performance/correctness:
-    // - Use a normal HashMap (WeakHashMap can drop entries unpredictably).
-    // - Keep entries for at most 1 tick. If PlayerVelocityEvent does not fire, a stale entry must not affect
-    //   a later, unrelated velocity event (explosions, plugins, etc.).
-    // - Avoid scheduling one task per hit: we run one shared cleanup task only while there is anything pending.
-    private final Map<UUID, PendingKnockback> pendingKnockback = new HashMap<>();
+    private final Set<UUID> handledKnockback = new HashSet<>();
+    private final Map<UUID, CapturedAttackState> capturedState = new HashMap<>();
+    private final Map<UUID, CapturedCooldown> capturedCooldown = new HashMap<>();
     private BukkitTask pendingCleanupTask;
     private long pendingTickCounter;
 
@@ -70,8 +62,6 @@ public class ModulePlayerKnockback extends OCMModule {
         knockbackVerticalLimit = module().getDouble("knockback-vertical-limit", 0.4);
         knockbackExtraHorizontal = module().getDouble("knockback-extra-horizontal", 0.5);
         knockbackExtraVertical = module().getDouble("knockback-extra-vertical", 0.1);
-        netheriteKnockbackResistance = module().getBoolean("enable-knockback-resistance", false)
-                && Reflector.versionIsNewerOrEqualTo(1, 16, 0);
     }
 
     @Override
@@ -82,130 +72,102 @@ public class ModulePlayerKnockback extends OCMModule {
 
     @EventHandler
     public void onPlayerQuit(PlayerQuitEvent e) {
-        pendingKnockback.remove(e.getPlayer().getUniqueId());
+        final UUID uuid = e.getPlayer().getUniqueId();
+        handledKnockback.remove(uuid);
+        capturedState.remove(uuid);
+        capturedCooldown.remove(uuid);
         stopCleanupTaskIfIdle();
     }
 
-    // Vanilla does its own knockback, so we need to set it again.
-    // priority = lowest because we are ignoring the existing velocity, which could
-    // break other plugins
-    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
-    public void onPlayerVelocityEvent(PlayerVelocityEvent event) {
-        final UUID uuid = event.getPlayer().getUniqueId();
-        final PendingKnockback pending = pendingKnockback.remove(uuid);
-        if (pending == null) return;
-        event.setVelocity(pending.velocity);
-        stopCleanupTaskIfIdle();
-    }
-
-    @EventHandler
-    public void onEntityDamage(EntityDamageEvent event) {
-        // Disable netherite kb, the knockback resistance attribute makes the velocity
-        // event not be called
-        final Entity entity = event.getEntity();
-        if (!(entity instanceof Player) || netheriteKnockbackResistance)
-            return;
-        final Player damagee = (Player) entity;
-
-        // This depends on the attacker's combat mode
-        if (event.getCause() == EntityDamageEvent.DamageCause.ENTITY_ATTACK
-                && event instanceof EntityDamageByEntityEvent) {
-            final Entity damager = ((EntityDamageByEntityEvent) event).getDamager();
-            if (!isEnabled(damager))
-                return;
-        } else {
-            if (!isEnabled(damagee))
-                return;
-        }
-
-        final AttributeInstance attribute = damagee.getAttribute(XAttribute.KNOCKBACK_RESISTANCE.get());
-        attribute.getModifiers().forEach(attribute::removeModifier);
-    }
-
-    // Monitor priority because we don't modify anything here, but apply on velocity
-    // change event
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onEntityDamageEntity(EntityDamageByEntityEvent event) {
-        final Entity damager = event.getDamager();
-        if (!(damager instanceof LivingEntity))
+        if (!(event.getDamager() instanceof Player attacker)) return;
+        if (!(event.getEntity() instanceof Player victim)) return;
+
+        if (!isEnabled(attacker) || !isEnabled(victim)) return;
+
+        if (event.getCause() != EntityDamageEvent.DamageCause.ENTITY_ATTACK) return;
+        capturedCooldown.put(attacker.getUniqueId(), new CapturedCooldown(attacker.getAttackCooldown(), pendingTickCounter + 1));
+    }
+
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
+    public void onEntityKnockbackByEntity(EntityKnockbackByEntityEvent event) {
+        if (!(event.getEntity() instanceof Player victim)) return;
+        if (!(event.getHitBy() instanceof Player attacker)) return;
+
+        if (!isEnabled(attacker) || !isEnabled(victim)) return;
+
+        if (event.getCause() != EntityKnockbackByEntityEvent.Cause.ENTITY_ATTACK) return;
+
+        final UUID uuid = victim.getUniqueId();
+
+        if (handledKnockback.remove(uuid)) {
+            final CapturedAttackState state = capturedState.remove(uuid);
+            if (state == null) return;
+
+            final double knockbackReduction = victim.getAttribute(XAttribute.KNOCKBACK_RESISTANCE.get()).getValue();
+            final double resistance = 1.0 - knockbackReduction;
+
+            if (state.bonusKnockback > 0) {
+                double x = -Math.sin(Math.toRadians(state.yaw)) * state.bonusKnockback * knockbackExtraHorizontal * resistance;
+                double y = knockbackExtraVertical * resistance;
+                double z = Math.cos(Math.toRadians(state.yaw)) * state.bonusKnockback * knockbackExtraHorizontal * resistance;
+
+                event.setKnockback(new Vector(x, y, z));
+            } else {
+                event.setCancelled(true);
+            }
+
+            stopCleanupTaskIfIdle();
             return;
-        final LivingEntity attacker = (LivingEntity) damager;
-
-        final Entity damagee = event.getEntity();
-        if (!(damagee instanceof Player))
-            return;
-        final Player victim = (Player) damagee;
-
-        if (event.getCause() != EntityDamageEvent.DamageCause.ENTITY_ATTACK)
-            return;
-
-        if (attacker instanceof HumanEntity) {
-            if (!isEnabled(attacker))
-                return;
-        } else if (!isEnabled(victim))
-            return;
-
-        // Figure out base knockback direction
-        Location attackerLocation = attacker.getLocation();
-        Location victimLocation = victim.getLocation();
-        double d0 = attackerLocation.getX() - victimLocation.getX();
-        double d1;
-
-        for (d1 = attackerLocation.getZ() - victimLocation.getZ(); d0 * d0
-                + d1 * d1 < 1.0E-4D; d1 = (Math.random() - Math.random()) * 0.01D) {
-            d0 = (Math.random() - Math.random()) * 0.01D;
         }
 
-        final double magnitude = Math.sqrt(d0 * d0 + d1 * d1);
-
-        // Get player knockback before any friction is applied
-        final Vector playerVelocity = victim.getVelocity();
-
-        // Apply friction, then add base knockback
-        playerVelocity.setX((playerVelocity.getX() / 2) - (d0 / magnitude * knockbackHorizontal));
-        playerVelocity.setY((playerVelocity.getY() / 2) + knockbackVertical);
-        playerVelocity.setZ((playerVelocity.getZ() / 2) - (d1 / magnitude * knockbackHorizontal));
-
-        // Calculate bonus knockback for sprinting or knockback enchantment levels
         final EntityEquipment equipment = attacker.getEquipment();
+        int bonusKnockback = 0;
         if (equipment != null) {
             final ItemStack heldItem = equipment.getItemInMainHand().getType() == Material.AIR
                     ? equipment.getItemInOffHand()
                     : equipment.getItemInMainHand();
-
-            int bonusKnockback;
-            if (XEnchantment.KNOCKBACK.getEnchant() == null) {
-                bonusKnockback = 0;
-            } else {
+            if (XEnchantment.KNOCKBACK.getEnchant() != null)
                 bonusKnockback = heldItem.getEnchantmentLevel(XEnchantment.KNOCKBACK.getEnchant());
-            }
-            if (attacker instanceof Player && ((Player) attacker).isSprinting()) {
-                bonusKnockback++;
-            }
-
-            if (playerVelocity.getY() > knockbackVerticalLimit)
-                playerVelocity.setY(knockbackVerticalLimit);
-
-            if (bonusKnockback > 0) { // Apply bonus knockback
-                playerVelocity.add(new Vector((-Math.sin(attacker.getLocation().getYaw() * 3.1415927F / 180.0F) *
-                        (float) bonusKnockback * knockbackExtraHorizontal), knockbackExtraVertical,
-                        Math.cos(attacker.getLocation().getYaw() * 3.1415927F / 180.0F) *
-                                (float) bonusKnockback * knockbackExtraHorizontal));
-            }
         }
 
-        if (netheriteKnockbackResistance) {
-            // Allow netherite to affect the horizontal knockback. Each piece of armour
-            // yields 10% resistance
-            final double resistance = 1 - victim.getAttribute(XAttribute.KNOCKBACK_RESISTANCE.get()).getValue();
-            playerVelocity.multiply(new Vector(resistance, 1, resistance));
+        final CapturedCooldown cooldown = capturedCooldown.remove(attacker.getUniqueId());
+        final float attackCooldown = cooldown != null ? cooldown.attackCooldown() : 0.0F;
+
+        if (attacker.isSprinting() && attackCooldown > 0.848F)
+            bonusKnockback++;
+
+        final Location attackerLocation = attacker.getLocation();
+        final Location victimLocation = victim.getLocation();
+        final float attackerYaw = attackerLocation.getYaw();
+
+        double d0 = attackerLocation.getX() - victimLocation.getX();
+        double d1 = attackerLocation.getZ() - victimLocation.getZ();
+
+        while (d0 * d0 + d1 * d1 < 1.0E-4D) {
+            d1 = (Math.random() - Math.random()) * 0.01D;
+            d0 = (Math.random() - Math.random()) * 0.01D;
         }
 
-        final UUID victimId = victim.getUniqueId();
+        final double magnitude = Math.sqrt(d0 * d0 + d1 * d1);
+        final double knockbackReduction = victim.getAttribute(XAttribute.KNOCKBACK_RESISTANCE.get()).getValue();
+        final double resistance = 1.0 - knockbackReduction;
+        final double frictionDivisor = 2.0 - knockbackReduction;
 
-        // Knockback is sent immediately in 1.8+, there is no reason to send packets
-        // manually
-        pendingKnockback.put(victimId, new PendingKnockback(playerVelocity, pendingTickCounter + 1));
+        final Vector playerVelocity = victim.getVelocity();
+
+        double x = (playerVelocity.getX() / frictionDivisor) - (d0 / magnitude * knockbackHorizontal * resistance);
+        double y = (playerVelocity.getY() / frictionDivisor) + knockbackVertical * resistance;
+        double z = (playerVelocity.getZ() / frictionDivisor) - (d1 / magnitude * knockbackHorizontal * resistance);
+
+        if (y > knockbackVerticalLimit)
+            y = knockbackVerticalLimit;
+
+        event.setKnockback(new Vector(x - playerVelocity.getX(), y - playerVelocity.getY(), z - playerVelocity.getZ()));
+
+        handledKnockback.add(uuid);
+        capturedState.put(uuid, new CapturedAttackState(bonusKnockback, attackerYaw,pendingTickCounter + 1));
         ensureCleanupTaskRunning();
     }
 
@@ -213,20 +175,26 @@ public class ModulePlayerKnockback extends OCMModule {
         if (pendingCleanupTask != null) return;
         pendingTickCounter = 0;
 
-        // Delay by 1 tick so we never expire entries in the same tick they were created.
         pendingCleanupTask = Bukkit.getScheduler().runTaskTimer(plugin, () -> {
             pendingTickCounter++;
-            if (pendingKnockback.isEmpty()) {
+            if (capturedState.isEmpty() && capturedCooldown.isEmpty()) {
                 stopCleanupTaskIfIdle();
                 return;
             }
 
-            final Iterator<Map.Entry<UUID, PendingKnockback>> it = pendingKnockback.entrySet().iterator();
-            while (it.hasNext()) {
-                final PendingKnockback pending = it.next().getValue();
-                if (pending == null || pending.expiresAtTick <= pendingTickCounter) {
-                    it.remove();
+            if (!capturedState.isEmpty()) {
+                final Iterator<Map.Entry<UUID, CapturedAttackState>> it = capturedState.entrySet().iterator();
+                while (it.hasNext()) {
+                    final Map.Entry<UUID, CapturedAttackState> entry = it.next();
+                    if (entry.getValue().expiresAtTick <= pendingTickCounter) {
+                        handledKnockback.remove(entry.getKey());
+                        it.remove();
+                    }
                 }
+            }
+
+            if (!capturedCooldown.isEmpty()) {
+                capturedCooldown.entrySet().removeIf(entry -> entry.getValue().expiresAtTick <= pendingTickCounter);
             }
 
             stopCleanupTaskIfIdle();
@@ -235,19 +203,12 @@ public class ModulePlayerKnockback extends OCMModule {
 
     private void stopCleanupTaskIfIdle() {
         if (pendingCleanupTask == null) return;
-        if (!pendingKnockback.isEmpty()) return;
+        if (!capturedState.isEmpty() || !capturedCooldown.isEmpty()) return;
         pendingCleanupTask.cancel();
         pendingCleanupTask = null;
     }
 
-    private static final class PendingKnockback {
-        private final Vector velocity;
-        private final long expiresAtTick;
+    private record CapturedAttackState(int bonusKnockback, float yaw, long expiresAtTick) {}
 
-        private PendingKnockback(Vector velocity, long expiresAtTick) {
-            // Defensive clone: callers may re-use/mutate the Vector instance.
-            this.velocity = velocity == null ? new Vector() : velocity.clone();
-            this.expiresAtTick = expiresAtTick;
-        }
-    }
+    private record CapturedCooldown(float attackCooldown, long expiresAtTick) {}
 }
