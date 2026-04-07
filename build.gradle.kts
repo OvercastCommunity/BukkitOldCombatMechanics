@@ -24,7 +24,7 @@ plugins {
     kotlin("jvm") version "2.3.0"
     id("com.gradleup.shadow") version "9.3.0"
     id("xyz.jpenilla.run-paper") version "3.0.2"
-    id("io.papermc.paperweight.userdev") version "2.0.0-beta.19"
+    id("io.papermc.paperweight.userdev") version "2.0.0-beta.21"
     idea
     id("io.papermc.hangar-publish-plugin") version "0.1.4"
 }
@@ -38,6 +38,7 @@ idea {
 }
 
 repositories {
+    mavenLocal()
     mavenCentral()
     maven("https://repo.papermc.io/repository/maven-public/")
     // Spigot API
@@ -100,7 +101,7 @@ dependencies {
     // JSR-305 annotations (javax.annotation.Nullable)
     compileOnly("com.google.code.findbugs:jsr305:3.0.2")
     // PacketEvents
-    implementation("com.github.retrooper:packetevents-spigot:2.11.2")
+    implementation("com.github.retrooper:packetevents-spigot:2.12.1-SNAPSHOT")
     // XSeries
     implementation("com.github.cryptomorin:XSeries:13.6.0")
 
